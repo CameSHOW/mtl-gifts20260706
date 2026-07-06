@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>MUSIC TALK RALLY '72 - Music Talk Live 特典</title>
+<style>
+  :root{
+    --bg:#050505;
+    --fg:#e8e8e8;
+    --accent:#5ec8f0;
+    --line:#333;
+  }
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg);
+    color:var(--fg);
+    font-family:"Courier New", monospace;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .frame{
+    display:flex; flex-direction:column; align-items:center; gap:12px;
+    padding:20px;
+    max-width:100vw; box-sizing:border-box;
+  }
+  h1{
+    letter-spacing:6px; font-size:22px; margin:0;
+    color:var(--accent);
+    text-shadow:0 0 6px var(--accent);
+  }
+  .sub{
+    font-size:12px; letter-spacing:2px; color:#888; text-align:center;
+  }
+  canvas{
+    background:#000;
+    border:2px solid var(--fg);
+    box-shadow:0 0 20px rgba(94,200,240,0.25);
+    image-rendering:pixelated;
+    max-width:100%; height:auto; display:block;
+    touch-action:none;
+  }
+  .score{
+    display:flex; gap:60px; font-size:28px; letter-spacing:4px;
+  }
+  .hint{
+    font-size:11px; color:#666; letter-spacing:1px;
+  }
+  .scanlines{
+    position:fixed; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.03) 0px,
+      rgba(255,255,255,0.03) 1px,
+      transparent 2px,
+      transparent 3px
+    );
+  }
+  button{
+    margin-top:4px;
+    background:transparent; color:var(--accent);
+    border:1px solid var(--accent);
+    padding:6px 16px; font-family:inherit; letter-spacing:2px;
+    cursor:pointer; font-size:12px;
+  }
+  button:hover{ background:var(--accent); color:#000; }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="frame">
+  <h1>MUSIC TALK RALLY</h1>
+  <div class="sub">MUSIC TALK LIVE &nbsp;特典アイテム &nbsp;/ &nbsp;'72 RALLY EDITION</div>
+  <div class="score"><span id="scoreL">0</span><span id="scoreR">0</span></div>
+  <canvas id="game" width="480" height="320"></canvas>
+  <div class="hint">左側: W / S キー &nbsp;|&nbsp; スマホ: 画面タップで上下操作 &nbsp;|&nbsp; 先に7点取ったら勝ち</div>
+  <button id="restart">RESTART</button>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const paddleW = 8, paddleH = 60;
+let leftY = H/2 - paddleH/2;
+let rightY = H/2 - paddleH/2;
+let leftScore = 0, rightScore = 0;
+const WIN_SCORE = 7;
+
+let ball = { x: W/2, y: H/2, vx: 4, vy: 3, size: 8 };
+
+let upPressed = false, downPressed = false;
+let gameOver = false;
+
+// ---- 効果音(Web Audio API。外部ファイル不要、端末内で音を生成) ----
+let audioCtx = null;
+function ensureAudio(){
+  if(!audioCtx){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(AC) audioCtx = new AC();
+  }
+  if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+function beep(freq, duration, type){
+  if(!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || 'square';
+  osc.frequency.value = freq;
+  gain.gain.value = 0.15;
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  osc.start(now);
+  osc.stop(now + duration);
+}
+
+// 掛け声(音声合成。外部ファイル不要、端末の読み上げ機能を使用)
+function speak(text, lang, pitch, rate){
+  if(!('speechSynthesis' in window)) return;
+  try{
+    speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = lang;
+    utter.pitch = pitch || 1;
+    utter.rate = rate || 1.1;
+    speechSynthesis.speak(utter);
+  }catch(e){}
+}
+let speechWarmed = false;
+function warmSpeech(){
+  if(speechWarmed || !('speechSynthesis' in window)) return;
+  speechWarmed = true;
+  try{
+    const utter = new SpeechSynthesisUtterance(' ');
+    utter.volume = 0;
+    speechSynthesis.speak(utter);
+  }catch(e){}
+}
+
+document.addEventListener('keydown', e=>{
+  ensureAudio();
+  warmSpeech();
+  if(e.key === 'w' || e.key === 'W') upPressed = true;
+  if(e.key === 's' || e.key === 'S') downPressed = true;
+});
+document.addEventListener('keyup', e=>{
+  if(e.key === 'w' || e.key === 'W') upPressed = false;
+  if(e.key === 's' || e.key === 'S') downPressed = false;
+});
+
+// タッチ操作(スマホ):画面上半分タップで上、下半分で下
+canvas.addEventListener('touchstart', handleTouch, {passive:true});
+canvas.addEventListener('touchmove', handleTouch, {passive:true});
+function handleTouch(e){
+  ensureAudio();
+  warmSpeech();
+  const rect = canvas.getBoundingClientRect();
+  const scaleY = canvas.height / rect.height;
+  const touchY = (e.touches[0].clientY - rect.top) * scaleY;
+  leftY = touchY - paddleH/2;
+}
+
+function resetBall(direction){
+  ball.x = W/2; ball.y = H/2;
+  ball.vx = 4 * direction;
+  ball.vy = (Math.random()*4 - 2);
+}
+
+// パドルの装飾(頭+手)が画面端で欠けないための余白
+const PADDLE_MARGIN = 14;
+
+function update(){
+  if(gameOver) return;
+
+  if(upPressed) leftY -= 6;
+  if(downPressed) leftY += 6;
+  leftY = Math.max(PADDLE_MARGIN, Math.min(H - paddleH - PADDLE_MARGIN, leftY));
+
+  // 簡易AI(右側)
+  const targetY = ball.y - paddleH/2;
+  rightY += (targetY - rightY) * 0.08;
+  rightY = Math.max(PADDLE_MARGIN, Math.min(H - paddleH - PADDLE_MARGIN, rightY));
+
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  if(ball.y <= 0 || ball.y >= H - ball.size){ ball.vy *= -1; beep(500, 0.04, 'square'); }
+
+  const MAX_SPEED = 11;
+// 左パドル判定
+  if(ball.x <= paddleW + 10 && ball.y + ball.size >= leftY && ball.y <= leftY + paddleH){
+    ball.vx = Math.min(Math.abs(ball.vx) * 1.03, MAX_SPEED);
+    ball.vy += (Math.random()*2 - 1);
+    ball.x = paddleW + 10;
+    speak('よいしょ', 'ja-JP', 1, 1.3);
+  }
+  // 右パドル判定
+  if(ball.x >= W - paddleW - 10 - ball.size && ball.y + ball.size >= rightY && ball.y <= rightY + paddleH){
+    ball.vx = -Math.min(Math.abs(ball.vx) * 1.03, MAX_SPEED);
+    ball.vy += (Math.random()*2 - 1);
+    ball.x = W - paddleW - 10 - ball.size;
+    speak('よいしょ', 'ja-JP', 1, 1.3);
+  }
+
+  if(ball.x < 0){
+    rightScore++; document.getElementById('scoreR').textContent = rightScore;
+    speak('Oh, No', 'en-US', 1, 1);
+    checkWin(); if(!gameOver) resetBall(1);
+  }
+  if(ball.x > W){
+    leftScore++; document.getElementById('scoreL').textContent = leftScore;
+    speak('Oh, No', 'en-US', 1, 1);
+    checkWin(); if(!gameOver) resetBall(-1);
+  }
+}
+
+// ボールを音符(♪)風のドット絵で描画
+function drawNoteBall(x, y, size){
+  const cx = x + size/2;
+  const cy = y + size/2;
+  const dot = 2;
+  ctx.fillStyle = '#c8f0ff';
+  // 符頭(丸い部分)
+  const headR = 4;
+  const headCX = cx, headCY = cy + 3;
+  for(let dy=-headR; dy<=headR; dy+=dot){
+    for(let dx=-headR; dx<=headR; dx+=dot){
+      if(dx*dx + dy*dy <= headR*headR){
+        ctx.fillRect(headCX + dx - dot/2, headCY + dy - dot/2, dot, dot);
+      }
+    }
+  }
+  // 符幹(縦の棒)
+  ctx.fillRect(headCX + headR - dot, headCY - headR - 9, dot, 13);
+  // 符尾(旗)
+  ctx.fillRect(headCX + headR, headCY - headR - 9, 5, dot);
+  ctx.fillRect(headCX + headR + 1, headCY - headR - 5, 4, dot);
+}
+
+function checkWin(){
+  if(leftScore >= WIN_SCORE || rightScore >= WIN_SCORE){
+    gameOver = true;
+  }
+}
+
+// アフロヘア風パドル(水色、丸い頭+上下の手のバー)
+function drawAfroPaddle(hitboxX, hitboxY){
+  const cx = hitboxX + paddleW/2;
+  const cy = hitboxY + paddleH/2;
+  const r = 27;
+  const dot = 5;
+  ctx.fillStyle = '#5ec8f0';
+  for(let dy=-r; dy<=r; dy+=dot){
+    for(let dx=-r; dx<=r; dx+=dot){
+      if(dx*dx + dy*dy <= r*r){
+        ctx.fillRect(cx + dx - dot/2, cy + dy - dot/2, dot, dot);
+      }
+    }
+  }
+  const handW2 = 6, handH2 = 16;
+  ctx.fillRect(cx - handW2/2, cy - r - handH2, handW2, handH2);
+  ctx.fillRect(cx - handW2/2, cy + r, handW2, handH2);
+}
+
+// 中央ネット部分に縦書きロゴを描画(全てローマ字)
+function drawCenterText(){
+  ctx.fillStyle = 'rgba(94,200,240,0.55)';
+  ctx.font = '13px "Courier New"';
+  ctx.textAlign = 'center';
+  const line1 = 'MUSIC'.split('');
+  const line2 = 'TALK'.split('');
+  const line3 = 'LIVE'.split('');
+  const lineH = 17;
+  const gap = 8;
+  const allChars = [...line1, null, ...line2, null, ...line3];
+  const totalHeight = allChars.length * lineH + gap;
+  let y = H/2 - totalHeight/2 + lineH/2;
+  allChars.forEach(ch=>{
+    if(ch !== null) ctx.fillText(ch, W/2, y);
+    y += lineH;
+  });
+}
+
+function draw(){
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle = '#333';
+  ctx.setLineDash([6,10]);
+  ctx.beginPath();
+  ctx.moveTo(W/2,0); ctx.lineTo(W/2,H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  drawCenterText();
+
+  drawAfroPaddle(10, leftY);
+  drawAfroPaddle(W - paddleW - 10, rightY);
+
+  ctx.fillStyle = '#5ec8f0';
+  drawNoteBall(ball.x, ball.y, ball.size);
+
+  if(gameOver){
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#5ec8f0';
+    ctx.font = '20px "Courier New"';
+    ctx.textAlign = 'center';
+    const msg = leftScore > rightScore ? 'YOU WIN!' : 'CPU WINS';
+    ctx.fillText(msg, W/2, H/2);
+    ctx.font = '12px "Courier New"';
+    ctx.fillStyle = '#888';
+    ctx.fillText('RESTARTボタンでもう一度', W/2, H/2 + 28);
+  }
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('restart').addEventListener('click', ()=>{
+  ensureAudio();
+  warmSpeech();
+  leftScore = 0; rightScore = 0;
+  document.getElementById('scoreL').textContent = 0;
+  document.getElementById('scoreR').textContent = 0;
+  gameOver = false;
+  resetBall(1);
+});
+
+resetBall(1);
+loop();
+</script>
+</body>
+</html>
