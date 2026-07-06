@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>MUSIC TALK RALLY '72 - Music Talk Live 特典</title>
+<style>
+  :root{
+    --bg:#050505;
+    --fg:#e8e8e8;
+    --accent:#39ff6a;
+    --line:#333;
+  }
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg);
+    color:var(--fg);
+    font-family:"Courier New", monospace;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .frame{
+    display:flex; flex-direction:column; align-items:center; gap:12px;
+    padding:20px;
+    max-width:100vw; box-sizing:border-box;
+  }
+  h1{
+    letter-spacing:6px; font-size:22px; margin:0;
+    color:var(--accent);
+    text-shadow:0 0 6px var(--accent);
+  }
+  .sub{
+    font-size:12px; letter-spacing:2px; color:#888; text-align:center;
+  }
+  canvas{
+    background:#000;
+    border:2px solid var(--fg);
+    box-shadow:0 0 20px rgba(57,255,106,0.25);
+    image-rendering:pixelated;
+    max-width:100%; height:auto; display:block;
+    touch-action:none;
+  }
+  .score{
+    display:flex; gap:60px; font-size:28px; letter-spacing:4px;
+  }
+  .hint{
+    font-size:11px; color:#666; letter-spacing:1px;
+  }
+  .scanlines{
+    position:fixed; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(
+      to bottom,
+      rgba(255,255,255,0.03) 0px,
+      rgba(255,255,255,0.03) 1px,
+      transparent 2px,
+      transparent 3px
+    );
+  }
+  button{
+    margin-top:4px;
+    background:transparent; color:var(--accent);
+    border:1px solid var(--accent);
+    padding:6px 16px; font-family:inherit; letter-spacing:2px;
+    cursor:pointer; font-size:12px;
+  }
+  button:hover{ background:var(--accent); color:#000; }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="frame">
+  <h1>MUSIC TALK RALLY</h1>
+  <div class="sub">MUSIC TALK LIVE &nbsp;特典アイテム &nbsp;/ &nbsp;'72 RALLY EDITION</div>
+  <div class="score"><span id="scoreL">0</span><span id="scoreR">0</span></div>
+  <canvas id="game" width="480" height="320"></canvas>
+  <div class="hint">左側: W / S キー &nbsp;|&nbsp; スマホ: 画面タップで上下操作 &nbsp;|&nbsp; 先に7点取ったら勝ち</div>
+  <button id="restart">RESTART</button>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const paddleW = 8, paddleH = 60;
+let leftY = H/2 - paddleH/2;
+let rightY = H/2 - paddleH/2;
+let leftScore = 0, rightScore = 0;
+const WIN_SCORE = 7;
+
+let ball = { x: W/2, y: H/2, vx: 4, vy: 3, size: 8 };
+
+let upPressed = false, downPressed = false;
+let gameOver = false;
+
+document.addEventListener('keydown', e=>{
+  if(e.key === 'w' || e.key === 'W') upPressed = true;
+  if(e.key === 's' || e.key === 'S') downPressed = true;
+});
+document.addEventListener('keyup', e=>{
+  if(e.key === 'w' || e.key === 'W') upPressed = false;
+  if(e.key === 's' || e.key === 'S') downPressed = false;
+});
+
+// タッチ操作(スマホ):画面上半分タップで上、下半分で下
+canvas.addEventListener('touchstart', handleTouch, {passive:true});
+canvas.addEventListener('touchmove', handleTouch, {passive:true});
+function handleTouch(e){
+  const rect = canvas.getBoundingClientRect();
+  const scaleY = canvas.height / rect.height;
+  const touchY = (e.touches[0].clientY - rect.top) * scaleY;
+  leftY = touchY - paddleH/2;
+}
+
+function resetBall(direction){
+  ball.x = W/2; ball.y = H/2;
+  ball.vx = 4 * direction;
+  ball.vy = (Math.random()*4 - 2);
+}
+
+function update(){
+  if(gameOver) return;
+
+  if(upPressed) leftY -= 6;
+  if(downPressed) leftY += 6;
+  leftY = Math.max(0, Math.min(H - paddleH, leftY));
+
+  // 簡易AI(右側)
+  const targetY = ball.y - paddleH/2;
+  rightY += (targetY - rightY) * 0.08;
+  rightY = Math.max(0, Math.min(H - paddleH, rightY));
+
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  if(ball.y <= 0 || ball.y >= H - ball.size) ball.vy *= -1;
+
+  const MAX_SPEED = 11;
+// 左パドル判定
+  if(ball.x <= paddleW + 10 && ball.y + ball.size >= leftY && ball.y <= leftY + paddleH){
+    ball.vx = Math.min(Math.abs(ball.vx) * 1.03, MAX_SPEED);
+    ball.vy += (Math.random()*2 - 1);
+    ball.x = paddleW + 10;
+  }
+  // 右パドル判定
+  if(ball.x >= W - paddleW - 10 - ball.size && ball.y + ball.size >= rightY && ball.y <= rightY + paddleH){
+    ball.vx = -Math.min(Math.abs(ball.vx) * 1.03, MAX_SPEED);
+    ball.vy += (Math.random()*2 - 1);
+    ball.x = W - paddleW - 10 - ball.size;
+  }
+
+  if(ball.x < 0){
+    rightScore++; document.getElementById('scoreR').textContent = rightScore;
+    checkWin(); if(!gameOver) resetBall(1);
+  }
+  if(ball.x > W){
+    leftScore++; document.getElementById('scoreL').textContent = leftScore;
+    checkWin(); if(!gameOver) resetBall(-1);
+  }
+}
+
+function checkWin(){
+  if(leftScore >= WIN_SCORE || rightScore >= WIN_SCORE){
+    gameOver = true;
+  }
+}
+
+function draw(){
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle = '#333';
+  ctx.setLineDash([6,10]);
+  ctx.beginPath();
+  ctx.moveTo(W/2,0); ctx.lineTo(W/2,H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#e8e8e8';
+  ctx.fillRect(10, leftY, paddleW, paddleH);
+  ctx.fillRect(W - paddleW - 10, rightY, paddleW, paddleH);
+
+  ctx.fillStyle = '#39ff6a';
+  ctx.fillRect(ball.x, ball.y, ball.size, ball.size);
+
+  if(gameOver){
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#39ff6a';
+    ctx.font = '20px "Courier New"';
+    ctx.textAlign = 'center';
+    const msg = leftScore > rightScore ? 'YOU WIN!' : 'CPU WINS';
+    ctx.fillText(msg, W/2, H/2);
+    ctx.font = '12px "Courier New"';
+    ctx.fillStyle = '#888';
+    ctx.fillText('RESTARTボタンでもう一度', W/2, H/2 + 28);
+  }
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('restart').addEventListener('click', ()=>{
+  leftScore = 0; rightScore = 0;
+  document.getElementById('scoreL').textContent = 0;
+  document.getElementById('scoreR').textContent = 0;
+  gameOver = false;
+  resetBall(1);
+});
+
+resetBall(1);
+loop();
+</script>
+</body>
+</html>
